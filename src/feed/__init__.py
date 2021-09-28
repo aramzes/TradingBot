@@ -14,7 +14,7 @@ class Ifeed:
     def get_ticker(self, symbol):
         raise NotImplementedError
     
-    def get_historical_data(self, symbol):
+    def get_candles(self, symbol):
         raise NotImplementedError
 
     
