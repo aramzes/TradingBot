@@ -1,0 +1,19 @@
+{
+    "account": {
+        "key": "xxxxx",
+        "secret": "xxxxx",
+        "subaccount": "Test"
+    },
+    "order": {
+        "market": "BTC-PERP",
+        "side": "sell",
+        "price": 10000000,
+        "type": "limit",
+        "size": 1,
+        "reduceOnly": false,
+        "ioc": false,
+        "postOnly": false,
+        "clientId": null
+    },
+    "order_id": "xxxxxxxx"
+}
