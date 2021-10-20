@@ -63,11 +63,26 @@ class Test(unittest.TestCase):
     def test_place_order(self):
         ftx_order = FtxOrder(self.ftx_test["order"])
         res = self.account.place_order(ftx_order)
+        # Error due to "Account does not have enough margin for order" 
+        # since it is not needed to actually execute orders
         self.assertIn("Error", res)
     
     def test_get_order_status(self):
         res = self.account.get_order_status(self.ftx_test["order_id"])
         self.assertEqual(res["status"], "closed")        
+
+    def test_modify_order(self):
+        modification = {
+            "price": 10000001
+        }
+        res = self.account.modify_order(self.ftx_test["order_id"], modification)
+        # Error due to "Order Nor found" since it is an old order
+        self.assertIn("Error", res)
+
+    def test_cancel_order(self):
+        res = self.account.cancel_order(self.ftx_test["order_id"])
+        # Error due to "Order Nor found" since it is an old order
+        self.assertIn("Error", res)
 
     def tearDown(self):
         self.account.rest_client._session.close()
@@ -218,8 +233,16 @@ class FtxAccount(IAccount):
         order = self.rest_client.get(f"orders/{order_id}")
         return order
 
-    def modify_order(self, order_id):
-        raise NotImplementedError
+    def modify_order(self, order_id, modification: Dict):
+        try:
+            modified_order = self.rest_client.post(f"orders/{order_id}/modify", modification)
+        except Exception as e:
+            return (f"Error: {e}")
+        return modified_order
 
     def cancel_order(self, order_id):
-        raise NotImplementedError 
+        try:
+            cancelled = self.rest_client.delete(f"orders/{order_id}")
+        except Exception as e:
+            return (f"Error: {e}")
+        return cancelled    
