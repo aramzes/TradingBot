@@ -1,7 +1,7 @@
 import unittest
 import requests
 
-from .. import Ifeed
+from .. import Feed 
 
 class TestFeed(unittest.TestCase):
     def setUp(self):
@@ -32,7 +32,7 @@ class TestFeed(unittest.TestCase):
         self.assertIsInstance(res, list)
         self.assertNotEqual(res, [])
 
-class binanceFeed(Ifeed):
+class binanceFeed(Feed):
     def __init__(self):
         # self.base_url = "https://testnet.binance.vision/api"
         self.base_url = "https://api.binance.com/api"

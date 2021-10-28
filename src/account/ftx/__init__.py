@@ -11,7 +11,7 @@ from .. import IAccount
 
 class Test(unittest.TestCase):
     def setUp(self):
-        with open("config/test/ftx_account.json") as test_file:
+        with open("config/test/account/ftx.json") as test_file:
             ftx_test = json.load(test_file)
         self.ftx_test = ftx_test
         # read-only API keys can be used without testing place_order

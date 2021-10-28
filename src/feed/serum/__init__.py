@@ -1,7 +1,7 @@
 import unittest
 import requests
 
-from .. import Ifeed
+from .. import Feed 
 
 class TestFeed(unittest.TestCase):
     def setUp(self):
@@ -55,7 +55,7 @@ class TestFeed(unittest.TestCase):
     #     self.assertIsInstance(res, list)
     #     self.assertNotEqual(res, [])
 
-class SerumFeed(Ifeed):
+class SerumFeed(Feed):
     def __init__(self):
         self.base_url = "https://serum-api.bonfida.com/"
         self.ws_base_url = "wss://serum-ws.bonfida.com/"

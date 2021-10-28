@@ -2,10 +2,9 @@ import requests
 import unittest
 import time
 import pandas as pd
+import datetime
 
-from datetime import date
-
-from .. import Ifeed
+from .. import Feed
 from utils.date import daterange
 
 class TestFeed(unittest.TestCase):
@@ -42,12 +41,15 @@ class TestFeed(unittest.TestCase):
         self.assertIn("low", res[0])
 
     def test_download_candles(self):
-        res = self.feed.download_candles("BTC-PERP", "2021-09-01", "2021-09-10", "data/test/ftx/")
-        new_df = pd.read_csv("data/test/ftx/2021-09-10.csv")
-        test_df = pd.read_csv("data/test/ftx/test_df.csv")
+        res = self.feed.download_candles("BTC-PERP",  300, "2021-09-01", "2021-09-10", "data/test/ftx/candles/", filename="2021-09-10")
+        new_df = pd.read_csv("data/test/ftx/candles/2021-09-10.csv")
+        test_df = pd.read_csv("data/test/ftx/candles/test_df.csv")
         self.assertTrue(new_df.equals(test_df))
 
-class FtxFeed(Ifeed):
+    def test_load_candles(self):
+        res = self.feed.load_candles("BTC-PERP", 300, 10, "2021-09-10", "data/test/ftx/candles/")
+
+class FtxFeed(Feed):
     def __init__(self):
         self.base_url = "https://ftx.com/api/"
         self.ws_base_url = "wss://ftx.com/ws/"
@@ -83,26 +85,50 @@ class FtxFeed(Ifeed):
         candles = self.get(f"markets/{symbol}/candles", params)["result"]
         return candles
 
-    def download_candles(self, market, start_date="2019-09-01", end_date=None, dir=None):
+    def download_candles(self, market, resolution, start_date="2019-09-01", end_date=None, dir="data/ftx/candles/", filename=None, save=True):
         start_year, start_month, start_day = start_date.split("-")
-        start_date = date(int(start_year), int(start_month), int(start_day))
+        start_date = datetime.date(int(start_year), int(start_month), int(start_day))
         if not end_date:
             end_date = datetime.today().strftime('%Y-%m-%d')
         end_year, end_month, end_day = end_date.split("-")
-        end_date = date(int(end_year), int(end_month), int(end_day))
+        end_date = datetime.date(int(end_year), int(end_month), int(end_day))
 
         candles_list = []
         for single_date in daterange(start_date, end_date):
             unixtime = time.mktime(single_date.timetuple())
-            res = self.get_candles(market, start=unixtime, end = unixtime + 24 * 12 * 300)
+            res = self.get_candles(market, resolution, start=unixtime, end = unixtime + 24 * 12 * resolution)
             candles_list += res
         all = pd.DataFrame(candles_list)
         all.drop("time", axis=1, inplace=True)
         all.set_index("startTime", inplace=True)
         all.sort_index(inplace=True)
         all.drop_duplicates(inplace=True)
+        if save: 
+            if not filename:
+                filename = f"data-{market.lower()}-{resolution}"
+            all.to_csv(f"{dir}{filename}.csv")
+        return all
+    
+    def load_candles(self, market, resolution, days, end_date=None, dir="data/ftx/candles/"):
+        if not end_date:
+            end_date = datetime.today().strftime("%Y-%m-%d")
+
+        start_date = datetime.datetime.strptime(end_date, "%Y-%m-%d") - datetime.timedelta(days=days) 
+        start_date = start_date.strftime("%Y-%m-%d")
+        try:
+            latest_data = pd.read_csv(f"{dir}/data-{market.lower()}-{resolution}.csv")
+            if latest_data.startTime[-1] < start_date:
+               new_data = self.download_candles(market, resolution, start_date=latest_data.startTime[-1][:9], end_date=end_date, dir=dir, save=False)
+            else:
+               new_data = self.download_candles(market, resolution, start_date=start_date, end_date=end_date, dir=dir, save=False)
+            new_data.set_index("startTime", inplace=True)
+            all_data = pd.concat(latest_data, new_data)
+            all_data = all_data.drop_duplicates(inplace=True)
+            all_data.sort_index(inplace=True)
+            all_data.to_csv(f"{dir}/data-{market.lower()}-{resolution}.csv")
+        except:
+            all_data = self.download_candles(market, resolution, start_date=start_date, end_date=end_date, dir=dir)
+
+        return all_data
+
         
-        if not dir:
-            dir = "data/candles/ftx/"
-            
-        all.to_csv(f"{dir}{end_date}.csv")

@@ -5,7 +5,7 @@ import math
 from solana.rpc.api import Client
 from solana.publickey import PublicKey
 
-from .. import Ifeed 
+from .. import Feed 
 
 class TestFeed(unittest.TestCase):
     def setUp(self):
@@ -64,7 +64,7 @@ class TestFeed(unittest.TestCase):
         print(res3)
     '''
                 
-class BonfidaFeed(Ifeed):
+class BonfidaFeed(Feed):
     def __init__(self):
         self.base_url = "http://localhost:3000/"
         self.solana_client = Client("https://api.mainnet-beta.solana.com/")
