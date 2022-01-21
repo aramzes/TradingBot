@@ -14,14 +14,6 @@ class Test(unittest.TestCase):
 class Feed:
     def __init__(self):
         self.base_url = None
-    
-    @staticmethod
-    def load(exchange):
-        feed_module = import_module(f"feed.{exchange}")
-        feed_class = getattr(feed_module, f"{exchange.capitalize()}Feed")
-        instance = feed_class()
-
-        return instance        
 
     def get_orderbook(self, symbol):
         raise NotImplementedError

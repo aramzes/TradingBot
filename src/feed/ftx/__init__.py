@@ -1,3 +1,4 @@
+from numpy.lib.shape_base import _apply_along_axis_dispatcher
 import requests
 import unittest
 import time
@@ -91,10 +92,11 @@ class FtxFeed(Feed):
         if not end_date:
             end_date = datetime.today().strftime('%Y-%m-%d')
         end_year, end_month, end_day = end_date.split("-")
-        end_date = datetime.date(int(end_year), int(end_month), int(end_day))
+        end_date = datetime.date(int(end_year), int(end_month), int(end_day) + 1)
 
         candles_list = []
         for single_date in daterange(start_date, end_date):
+            print(single_date)
             unixtime = time.mktime(single_date.timetuple())
             res = self.get_candles(market, resolution, start=unixtime, end = unixtime + 24 * 12 * resolution)
             candles_list += res
@@ -111,23 +113,31 @@ class FtxFeed(Feed):
     
     def load_candles(self, market, resolution, days, end_date=None, dir="data/ftx/candles/"):
         if not end_date:
-            end_date = datetime.today().strftime("%Y-%m-%d")
+            end_date = datetime.datetime.today().strftime("%Y-%m-%d")
 
         start_date = datetime.datetime.strptime(end_date, "%Y-%m-%d") - datetime.timedelta(days=days) 
         start_date = start_date.strftime("%Y-%m-%d")
         try:
-            latest_data = pd.read_csv(f"{dir}/data-{market.lower()}-{resolution}.csv")
-            if latest_data.startTime[-1] < start_date:
-               new_data = self.download_candles(market, resolution, start_date=latest_data.startTime[-1][:9], end_date=end_date, dir=dir, save=False)
-            else:
-               new_data = self.download_candles(market, resolution, start_date=start_date, end_date=end_date, dir=dir, save=False)
-            new_data.set_index("startTime", inplace=True)
-            all_data = pd.concat(latest_data, new_data)
-            all_data = all_data.drop_duplicates(inplace=True)
-            all_data.sort_index(inplace=True)
-            all_data.to_csv(f"{dir}/data-{market.lower()}-{resolution}.csv")
-        except:
-            all_data = self.download_candles(market, resolution, start_date=start_date, end_date=end_date, dir=dir)
+            latest_data = pd.read_csv(f"{dir}data-{market.lower()}-{resolution}.csv")
+            if start_date < latest_data.startTime.iloc[0][:10]: 
+                new_data = self.download_candles(market, resolution, start_date=start_date, end_date=latest_data.startTime.iloc[0][:10], dir=dir, save=False)
+                new_data = new_data.reset_index().rename(columns={"index": "startTime"})
+                latest_data = pd.concat([new_data, latest_data])
+
+            if end_date > latest_data.startTime.iloc[-1][:10]:
+                new_data = self.download_candles(market, resolution, start_date=latest_data.startTime.iloc[-1][:10], end_date=end_date, dir=dir, save=False)
+                new_data = new_data.reset_index().rename(columns={"index": "startTime"})
+                latest_data = pd.concat([latest_data, new_data])
+
+            all_data = latest_data[(latest_data.startTime >= start_date) & (latest_data.startTime <= end_date)]
+            latest_data.to_csv(f"{dir}/data-{market.lower()}-{resolution}.csv", index=False)
+        except Exception as e:
+            print(e)
+            all_data = self.download_candles(market, resolution, start_date=start_date, end_date=end_date, dir=dir, save=True)
+            all_data = all_data.reset_index().rename(columns={"index": "startTime"})
+            all_data.to_csv(f"{dir}data-{market.lower()}-{resolution}.csv", index=False)
+        
+        all_data.loc[:, "startTime"] = pd.to_datetime(all_data["startTime"])
 
         return all_data
 
