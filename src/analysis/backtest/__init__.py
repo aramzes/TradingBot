@@ -1,7 +1,7 @@
 from datetime import timedelta
+from itertools import accumulate
 import sys
 import random
-from turtle import position
 
 import pandas as pd
 import numpy as np
@@ -16,22 +16,56 @@ class Backtest:
         self.initial_capital = 10000
         self.final_capital = None
         self.trading_fees_rate = 0.0008
+        self.min_holding_period = timedelta(hours=8)
+        self.min_waiting_period = timedelta(hours=0)
+        self.sampling_rate =  timedelta(minutes=5)
         self.positions = []
         self.strategy = load_strategy(strategy_name) 
-        self.strategy.load_data()
+        self.strategy.load_data(resolution=300, period=365)
         self._data = self.strategy.analyze_data()
 
     def backtest(self):
         self.generate_positions(self._data)
+        # self.check_lookahead(self.strategy.data, self._data, interval="1H")
         pnl_pct_list = self.get_metrics()
-        self.sample(self.strategy.data, self.positions, pnl_pct_list)
+        # self.sample(self.strategy.data, self.positions, pnl_pct_list)
         self.plot(self.positions)
+        self._get_pnl()
+    
+    def _get_pnl(self):
+        self._data["pnl"] = (
+            self._data["leverage"].shift(1).fillna(0)
+            * self._data["close"].pct_change().fillna(0)
+            - abs(self._data["leverage"].diff().fillna(0) * self.trading_fees_rate)
+            + 1
+        ).cumprod()
+        print(self._data)
+
+    def _get_real_leverage(self, positions: list):
+        entry_time = list(map(lambda x: x.entry_time.to_pydatetime(), positions))
+        lev = list(map(lambda x: x.leverage, positions))
+        self._data["real_lev"] = pd.DataFrame({"real_lev": lev}, index=entry_time)
+        for p in positions:
+            self._data.loc[(self._data.index >= p.entry_time) & (self._data.index < p.exit_time), "real_lev"] = p.leverage
+        self._data["real_lev"].fillna(0, inplace=True)
+        
 
     def plot(self, positions: list):
-        plt.plot(self.strategy.data.index, self.strategy.data.close)
-        time = list(map(lambda x: x.entry_time, positions))
-        leverage = list(map(lambda x: x.leverage, positions))
-        plt.plot(time, leverage)
+        exit_time = list(map(lambda x: x.exit_time.to_pydatetime(), positions))
+        pnl = list(accumulate(list(map(lambda x: x.pnl, positions))))
+        fig, ax = plt.subplots()
+        ax2 = ax.twinx()
+        ax3 = ax.twinx()
+        ax.plot(self.strategy.data.startTime, self.strategy.data.close, label="price")
+        ax.plot(self._data.index, self._data.ema_84, color="magenta")
+        ax.plot(self._data.index, self._data.ema_300, color="darkorange")
+        ax.plot(self._data.index, self._data.ema_1200, color="green")
+        ax.plot(self._data.index, self._data.ST, color="red")
+        self._get_real_leverage(positions)
+        # ax2.plot(self._data.index, self._data["leverage"], color="black", label="leverage")
+        # ax2.plot(self._data.index, self._data["real_lev"], color="darkorange", label="leverage")
+        # ax3.plot(exit_time, pnl, color="green", label="pnl")
+        plt.legend()
         plt.show()
          
 
@@ -40,22 +74,28 @@ class Backtest:
     def generate_positions(self, data: pd.DataFrame):
         data = data.reset_index() 
 
+        data = data.drop_duplicates()
+        data.iloc[[0, -1], data.columns.get_loc("leverage")] = [0, 0]
+
         capital = self.initial_capital
         positions = []
+        pos = Position()
+        lev = 0
         for index, row in data.iterrows():
             if index == 0:
-                data.loc[index, "leverage"] = 0
                 continue
             cur_lev = row["leverage"] 
-            cur_close = row["close_5m"]
+            cur_close = row["close"]
             cur_time = row["startTime"]
             last_lev = data["leverage"].iloc[index - 1]
-            if cur_lev != last_lev:
+            # last_lev = lev
+            if cur_lev != last_lev and cur_lev != lev and pos.ge_min_holding_period(cur_time, last_lev):
                 # closing position
                 if cur_lev == 0:
                     pos.close(cur_close, cur_time)
                     capital += pos.pnl
                     positions.append(pos)
+                    pos = Position()
                 else:
                     # if last position is not closed 
                     if last_lev != 0:
@@ -63,7 +103,12 @@ class Backtest:
                         capital += pos.pnl
                         positions.append(pos)
                     pos = Position()
-                    pos.open(capital, cur_lev, cur_time, cur_close, Side(cur_lev), self.trading_fees_rate)
+                    pos.open(capital, cur_lev, cur_time, cur_close, Side(cur_lev), self.trading_fees_rate, self.min_holding_period)
+                lev = cur_lev 
+
+        if not pos.closed():
+            pos.close(data.iloc[-1].close, data.iloc[-1].startTime)
+            positions.append(pos)
 
         self.final_capital = capital
         self.positions = positions
@@ -104,11 +149,11 @@ class Backtest:
     ):
         print(f"""
             pnl of trades (with trading fees): {round(sum(pnl_list), 0)}
-            trading fees: {trading_fees}
-            Total: {round(self.final_capital, 0)}
-            mean return per trade: {round(np.mean(pnl_pct_list))}
+            trading fees: {round(trading_fees)}
+            Total: {round(self.final_capital)}
+            mean return per trade: {round(np.mean(pnl_pct_list), 3)}
             standard deviation of pnl: {round(np.std(pnl_pct_list), 2)}
-            median: {round(np.median(pnl_pct_list), 1)}
+            median: {round(np.median(pnl_pct_list), 3)}
             max drawdown: {round(min(pnl_pct_list), 2)}
             max profit: {round(max(pnl_pct_list), 2)}
             trades: {len(self.positions)}
@@ -117,10 +162,11 @@ class Backtest:
             average holding period: {round(np.mean([holding_periods]), 1)}
             winrate: {round(len(wins) / len(self.positions) * 100, 1)}%
         """)
+        self.longer_trades_winrate(self.positions)
 
 
     def sample(self, data: pd.DataFrame, trades: list, pnl_pct_list: list):
-        n = len(trades) // 7
+        n = len(trades) // 5 
         samples = random.sample(trades, n) 
         random_dates = data["startTime"].sample(n = n).reset_index(drop=True)
         samples_returns = []
@@ -134,28 +180,30 @@ class Backtest:
                 pnl = (exit_price - entry_price) * s.size
                 samples_returns.append(pnl / s.notional_size)
         
-        sns.histplot(np.log1p(pnl_pct_list), label="real", kde=True)
-        sns.histplot(np.log1p(samples_returns), label="samples", kde=True, color="orange")
+        fig, ax = plt.subplots()
+        ax2 = ax.twinx()
+        sns.histplot(np.log1p(pnl_pct_list), label="real", kde=True, ax=ax)
+        sns.histplot(np.log1p(samples_returns), label="samples", kde=True, color="orange", ax=ax2)
         sns.set_theme(style="darkgrid")
         plt.legend()
         plt.show()
         
     
     def longer_trades_winrate(self, trades: list, period: int = 3):
-        win = []
+        wins = []
         for t in trades:
-            if t.duration > timedelta(hours=period) and t.pnl_pct > 0:
-                win.append(t)
-        print(f"win rate of trades longer than {period}: {len(win) / len(longs + shorts) * 100}%")
+            if t.duration > timedelta(hours=period) and t.pnl > 0:
+                wins.append(t)
+        print(f"win rate of {len(wins)} trades longer than {period} hours: {round(len(wins) / len(trades) * 100, 1)}%")
 
 
     def check_lookahead(self, raw_data, signal_data, interval):
-        raw_data = raw_data.resample(interval, on="startTime").mean()
+        # raw_data = raw_data.resample(interval, on="startTime").mean()
         
         for n in range(101):
             cut_data = raw_data.drop(raw_data.tail(n).index)
             cut_data.reset_index(inplace=True)
-            processed_data = self._random_strategy(cut_data, interval)
+            processed_data = self.strategy.analyze_data(cut_data, interval)
             cut_leverage = processed_data["leverage"]
             signal_leverage = signal_data["leverage"]
             signal_leverage.drop(signal_leverage.tail(n).index, inplace=True)

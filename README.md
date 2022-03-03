@@ -11,7 +11,7 @@ src
 └───feed                   # public data
 └───account                # private data
 └───strategy               # trading strategies. It may or may not include examples
-└───trader                 # executing and keeyping track of orders and trades
+└───trader                 # executing and keeping track of orders and trades
 └───utils                  # utility modules to connect to external modules such as telegram and databases
 ```
 
