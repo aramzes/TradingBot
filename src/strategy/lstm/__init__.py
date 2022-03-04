@@ -1,9 +1,11 @@
+from cProfile import label
 import pandas as pd
 import numpy as np
 import unittest
 import re
 import time
 import seaborn as sns
+import math
 import matplotlib.pyplot as plt
 
 from nltk.corpus import stopwords
@@ -163,52 +165,108 @@ class LSTMStrategy(Strategy):
         self.all_data = all_data.dropna()
         self.all_data.to_csv("data/dataset/lstm.csv")
     
+    
     def _build_lstm_model(self):
-        data = pd.read_csv("data/dataset/lstm.csv")
+        def split_series(series, n_past, n_future):
+            #
+            # n_past ==> no of past observations
+            #
+            # n_future ==> no of future observations 
+            #
+            X, y = list(), list()
+            for window_start in range(len(series)):
+                past_end = window_start + n_past
+                future_end = past_end + n_future
+                if future_end > len(series):
+                    break
+                # slicing the past and future parts of the window
+                past, future = series[window_start:past_end, :], series[past_end:future_end, :]
+                X.append(past)
+                y.append(future)
+            return np.array(X), np.array(y)
+        
+        lookback = 10 # hours to look back to predict the next closing price
+        data_org = pd.read_csv("data/dataset/lstm.csv", index_col=0)
+        data_org = data_org.drop(["pos", "neu", "neg"], axis=1)
+        data = data_org.copy()
+    
 
         # normalize data
-        scaler = MinMaxScaler()
-        data_norm = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
-
+        scaler= MinMaxScaler()
+        data = pd.DataFrame(scaler.fit_transform(data), columns=data.columns)
         # split train and test data
-        X_train, X_test, y_train, y_test = train_test_split(data_norm.drop(["close"]), data["close"], test_size=0.3,) 
 
+        n_past = lookback 
+        n_future = 1
+        n_features = 5 
+        train, test = data[:math.floor(0.7*len(data))], data[math.floor(0.7*len(data)):]
+        X_train, y_train = split_series(train.values,n_past, n_future)
+        X_train = X_train.reshape((X_train.shape[0], X_train.shape[1],n_features))
+        y_train = y_train.reshape((y_train.shape[0], y_train.shape[1], n_features))
+        X_test, y_test = split_series(test.values,n_past, n_future)
+        X_test = X_test.reshape((X_test.shape[0], X_test.shape[1],n_features))
+        y_test = y_test.reshape((y_test.shape[0], y_test.shape[1], n_features))
+        
         # build model
-        lookback = 48 # hours to look back to predict the next closing price
 
         model = Sequential()
 
-        model.add(Bidirectional(LSTM(lookback, return_sequences=True), input_shape=(lookback, X_train.shape[-1]),))
+        model.add(LSTM(lookback, return_sequences=True, input_shape=(lookback, X_train.shape[-1])))
         model.add(Dropout(0.2))
 
-        model.add(Bidirectional(LSTM((lookback*2), return_sequences=True)))
+        model.add(LSTM((lookback*2), return_sequences=True))
         model.add(Dropout(0.2))
 
-        model.add(Bidirectional(LSTM(lookback, return_sequences=False)))
+        model.add(LSTM(lookback, return_sequences=False))
 
-        model.add(Dense(output_dim=1))
-        model.add(Activation('relu'))
+        model.add(Dense(1))
+        model.add(Activation('tanh'))
 
         model.compile(loss='mse', optimizer='adam')
         print(model.summary())
 
         # fit the model
+        epochs = 20 
         start = time.time()
-        model.fit(X_train, y_train, batch_size=1024, epochs=10)
+        hist = model.fit(X_train, y_train, batch_size=1024, epochs=epochs, validation_split=0.2)
         print('training time : ', time.time() - start) 
 
         # predict the test data
         y_predict = model.predict(X_test)
+        plt.plot(hist.history["loss"])
+        plt.plot(hist.history["val_loss"])
+        plt.title('model loss')
+        plt.ylabel('loss')
+        plt.xlabel('epoch')
+        # plt.legend(['train', 'val'], loc='upper left')
+        # plt.savefig("data/result/model_accuracy.png", dpi=600)
+
+        df = data[len(data) - len(y_predict):]
+        df = df.set_index(pd.date_range(end="2022-02-18", periods=len(y_predict), freq="1h"))
+        df["predicted_close"] = y_predict / y_predict[0]
+        df["actual_close"] = y_test 
+        df["diff"] = df["predicted_close"].shift(freq=(f"-{lookback}h")) - df["predicted_close"]
+        df["leverage"] = df["diff"]
+        print(data_org["close"])
+        exit()
+        df["real_close"] = data_org["close"]
+        # print(df)
 
         # plot the prediction against actual
-        plt.plot(y_test, color='green')
-        plt.plot(y_predict, color='blue')
+        fig, ax = plt.subplots()
+        fig.autofmt_xdate()
+        ax.plot(df.index, df["close"] / df["close"].iloc[0], color='green', label="Actual Close")
+        # ax1 = ax.twinx()
+        ax.plot(df.index, df["predicted_close"], color='blue', label="Predicted Close")
         plt.title("Bitcoin Price")
         plt.ylabel("Price (USD)")
         plt.xlabel("Time (Hours)")
-        # plt.savefig("data/result/price.png", dpi = 600)
-        plt.show()
+        plt.legend()
+        # plt.savefig(f"data/result/price_{lookback}_{epochs}.png", dpi = 600)
+        # plt.show()
 
+        print(df.columns)
+        return df["leverage"], df["real_close"]
 
     def analyze_data(self):
         # # fetch price data from exchange
@@ -218,5 +276,6 @@ class LSTMStrategy(Strategy):
         # # analyze twitter to transform them into sentiment values
         # self._analyze_twitter_data()
         # # train the LSTM RNN using blockchain and twitter data
-        self._build_lstm_model()
+        df = self._build_lstm_model()
+        print(df)
 
